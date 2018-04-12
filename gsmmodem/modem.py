@@ -131,7 +131,8 @@ class GsmModem(SerialComms):
     # Used for parsing caller ID announcements for incoming calls. Group 1 is the number
     CLIP_REGEX = re.compile('^\+CLIP:\s*"\+{0,1}(\d+)",(\d+).*$')
     # Used for parsing own number. Group 1 is the number
-    CNUM_REGEX = re.compile('^\+CNUM:\s*".*?","(\+{0,1}\d+)",(\d+).*$')
+    CNUM_REGEX = re.compile('^\+CNUM:\s*,"(\d+)",(\d+).*$')
+
     # Used for parsing new SMS message indications
     CMTI_REGEX = re.compile('^\+CMTI:\s*"([^"]+)",\s*(\d+)$')
     # Used for parsing SMS message reads (text mode)
@@ -271,7 +272,7 @@ class GsmModem(SerialComms):
 
         # Attempt to identify modem type directly (if not already) - for outgoing call status updates
         if callUpdateTableHint == 0:
-            if 'simcom' in self.manufacturer.lower() : #simcom modems support DTMF and don't support AT+CLAC
+            if 'simcom' in self.manufacturer.lower() and '7100' not in self.model: #simcom modems support DTMF and don't support AT+CLAC
                 Call.dtmfSupport = True
                 self.write('AT+DDET=1')                # enable detect incoming DTMF
 
@@ -483,7 +484,10 @@ class GsmModem(SerialComms):
                         if errorType == 'CME':
                             raise CmeError(data, int(errorCode))
                         else: # CMS error
-                            raise CmsError(data, int(errorCode))
+                            if int(errorCode) == 321:
+                                return [""]*3
+                            else:
+                                raise CmsError(data, int(errorCode))
                     else:
                         raise CommandError(data)
                 elif cmdStatusLine == 'COMMAND NOT SUPPORT': # Some Huawei modems respond with this for unknown commands
@@ -935,15 +939,6 @@ class GsmModem(SerialComms):
         # Create sent SMS object for future delivery checks
         sms = SentSms(destination, text, reference)
 
-        # Add a weak-referenced entry for this SMS (allows us to update the SMS state if a status report is received)
-        self.sentSms[reference] = sms
-        if waitForDeliveryReport:
-            self._smsStatusReportEvent = threading.Event()
-            if self._smsStatusReportEvent.wait(deliveryTimeout):
-                self._smsStatusReportEvent = None
-            else: # Response timed out
-                self._smsStatusReportEvent = None
-                raise TimeoutException()
         return sms
 
     def sendUssd(self, ussdString, responseTimeout=15):
@@ -1440,11 +1435,12 @@ class GsmModem(SerialComms):
                 else:
                     raise CommandError('Failed to parse text-mode SMS message +CMGR response: {0}'.format(msgData))
         else:
-            cmgrMatch = self.CMGR_REGEX_PDU.match(msgData[0])
+            cmgrMatch = "CM" in msgData[0]#
             if not cmgrMatch:
                 raise CommandError('Failed to parse PDU-mode SMS message +CMGR response: {0}'.format(msgData))
-            stat, alpha, length = cmgrMatch.groups()
             try:
+                cmgrMatch = self.CMGR_REGEX_PDU.match(msgData[0])
+                stat, alpha, length = cmgrMatch.groups()
                 stat = int(stat)
             except Exception:
                 # Some modems (ZTE) do not always read return status - default to RECEIVED UNREAD

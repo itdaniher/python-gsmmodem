@@ -83,6 +83,7 @@ class SerialComms(object):
 
     def _placeholderCallback(self, *args, **kwargs):
         """ Placeholder callback function (does nothing) """
+        print(list(args), dict(kwargs))
 
     def _readLoop(self):
         """ Read thread main loop
